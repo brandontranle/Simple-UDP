@@ -4,9 +4,10 @@
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
-#include <sys/time.h>
 #include <unistd.h>
+#include "utils.h"
 
 int main(int argc, char** argv) {
     if (argc < 2) {
@@ -16,62 +17,58 @@ int main(int argc, char** argv) {
 
     int port = atoi(argv[1]);
 
-    // TODO: Create socket
+    // Create socket
     int socketfd = s_socket(AF_INET, SOCK_DGRAM, 0);
-    
-    if (socketfd < 0) {
-        perror("socket");
-        exit(1);
-    }
 
-    // TODO: Set stdin and socket nonblocking
-    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
-    flags |= O_NONBLOCK;
-    fcntl(STDIN_FILENO, F_SETFL, flags);
+    // Set socket nonblocking
+    set_nonblocking(socketfd);
+    set_nonblocking(STDIN_FILENO);
 
-    flags = fcntl(socketfd, F_GETFL, 0);
-    flags |= O_NONBLOCK;
-    fcntl(socketfd, F_SETFL, flags);
+    // Construct server address
+    struct sockaddr_in servaddr;
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = INADDR_ANY;
+    servaddr.sin_port = htons(port);
 
-    // TODO: Construct server address
-    struct sockaddr_in server_addr;
-    server_addr.sin_family = AF_INET; // IPv4
-    server_addr.sin_addr.s_addr = INADDR_ANY; // Accept all connections
-
-    int server_port = htons(port);
-    server_addr.sin_port = server_port;
-
-    // TODO: Bind address to socket
-    int did_bind = s_bind(socketfd, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    // Bind address to socket
+    int did_bind = s_bind(socketfd, (struct sockaddr*)&servaddr, sizeof(servaddr));
     if (did_bind < 0) return errno;
+   
+    // Create sockaddr_in and socklen_t buffers to store client address
+    char buffer[1024];
+    int client_connected = 0; 
+    struct sockaddr_in clientaddr = {0};
+    socklen_t clientaddr_len = sizeof(clientaddr);
 
-    // TODO: Create sockaddr_in and socklen_t buffers to store client address
-    int BUF_SIZE = 1024;
-    char buffer[BUF_SIZE];
-    int client_connected = 0;
-    struct sockaddr_in client_addr = {0};
-    socklen_t client_addr_len = sizeof(client_addr);
-
-    // Listen loop
     while (1) {
-        // TODO: Receive from socket
-        int bytes_received = s_recvfrom(socketfd, buffer, BUF_SIZE, 0, (struct sockaddr*)&client_addr, &client_addr_len);
-        // TODO: If no data and client not connected, continue
-        if (bytes_received < 0 && !client_connected) continue;
+        // Receive from socket
+        int bytes_received = s_recvfrom(socketfd, buffer, sizeof(buffer), 0, 
+                                        (struct sockaddr*)&clientaddr, &clientaddr_len);
 
-        // TODO: If data, client is connected and write to stdout
+        // If data is received, mark client as connected and write to stdout
         if (bytes_received > 0) {
             client_connected = 1;
             write(STDOUT_FILENO, buffer, bytes_received);
-        }   
-        // TODO: Read from stdin
-        int bytes_read = read(STDIN_FILENO, buffer, BUF_SIZE);
+        }
 
-        // TODO: If data, send to socket
-        if (bytes_read > 0) {
-            s_sendto(socketfd, buffer, bytes_read, 0, (struct sockaddr*)&client_addr, client_addr_len);
+        // If no client is connected, continue the loop
+        if (!client_connected) { 
+            continue;
+        }
+
+        // Read from stdin
+        int bytes_read = read(STDIN_FILENO, buffer, sizeof(buffer));
+
+        // If data, send to socket
+        if (bytes_read > 0) { 
+            while (bytes_read > 0) { //while no error 
+                int bytes_sent = s_sendto(socketfd, buffer, bytes_read, 0, (struct sockaddr*)&clientaddr, clientaddr_len); // Send the data from standard input to the client
+                if (bytes_sent < 0) return errno;
+                bytes_read -= bytes_sent; //remaining bytes sent in iterations
+            }
         }
     }
+
     close(socketfd);
     return 0;
 }
